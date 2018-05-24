@@ -1,0 +1,4 @@
+* READ/negotiate THE KEY
+
+* ENCRYPT (encapsulated) ETHERNET HEADERS or not? 
+	It would be possible to implement agnostic switches able to forward traffic they cannot decode.
