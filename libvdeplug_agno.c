@@ -220,9 +220,7 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 			errno = EINVAL;
 			goto error;
 		}
-		// newconn->ether_type = htons(type == 0 ? AGNO_TYPE : type);
 	}
-	// printf("%x\n", newconn->ether_type);
 	/* Set key as encryption and decryption key */
 	AES_set_encrypt_key(cryptkey, sizeof(cryptkey) * 8, &newconn->ekey);
 	AES_set_decrypt_key(cryptkey, sizeof(cryptkey) * 8, &newconn->dkey);
