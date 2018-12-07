@@ -1,5 +1,5 @@
 /*
- * VDE - libvdeplug_agno encrypted vde net (XChaCha20-Poly1305)
+ * VDE - libvdeplug_agno encrypted vde net (GCM-AES-128)
  * Copyright (C) 2018 Michele Nalli VirtualSquare
  *
  * This library is free software; you can redistribute it and/or modify it
@@ -37,10 +37,13 @@
 
 #include <assert.h>
 
-#include <sodium.h>
+/* gnutls data types - include before crypto */
+#include <gnutls/abstract.h>
+/* gnutls crypto functions */
+#include <gnutls/crypto.h>
 
 /* Uncomment to disable DEBUG_PRINT() and assert() */
-#define NDEBUG
+// #define NDEBUG
 
 #ifndef NDEBUG
 	#define DEBUG_PRINT(format, args...) \
@@ -50,27 +53,6 @@
 	#define DEBUG_PRINT(format, args...) do {} while(0)
 #endif
 
-// #if __BYTE_ORDER == __BIG_ENDIAN
-// uint64_t htonll(uint64_t hostlonglong) {
-// 	return hostlonglong
-// }
-//
-// uint64_t ntohll(uint64_t netlonglong) {
-// 	return netlonglong
-// }
-// #else
-//
-// # if __BYTE_ORDER == __LITTLE_ENDIAN
-// uint64_t htonll(uint64_t hostlonglong) {
-// 	return (((uint64_t) htonl((uint32_t) hostlonglong)) << 32 | htonl((uint32_t) (hostlonglong >> 32)));
-// }
-//
-// uint64_t ntohll(uint64_t netlonglong) {
-// 	return (((uint64_t) ntohl((uint32_t) netlonglong)) << 32 | ntohl((uint32_t) (netlonglong >> 32)));
-// }
-// # endif
-// #endif
-
 static VDECONN *vde_agno_open(char *vde_url, char *descr,int interface_version,
 		struct vde_open_args *open_args);
 static ssize_t vde_agno_recv(VDECONN *conn,void *buf,size_t len,int flags);
@@ -79,14 +61,23 @@ static int vde_agno_datafd(VDECONN *conn);
 static int vde_agno_ctlfd(VDECONN *conn);
 static int vde_agno_close(VDECONN *conn);
 
+#define AGNO_TYPE 0xa6de
+
+#define AES128_KEY_SIZE	16
+
 #define ETH_HEADER_SIZE sizeof(struct ether_header)
 
 #define JUMBO_FRAME_MAX_LENGHT ETH_HEADER_SIZE + 9000 /* payload */
 
-#define AGNO_TYPE 0xa6de
+/* 16 bytes is the most secure authentication */
+#define ICV_SIZE 16
+
+/* 12 bytes (96-bits) is the most efficient IV for GCM mode;
+ 	Only IV size supported by nettle and GnuTLS */
+#define NONCE_SIZE 12
 
 /* Nonce = | 4-byte fixed field | 8-byte invocation field | */
-#define FIXED_FIELD_SIZE crypto_aead_xchacha20poly1305_ietf_NPUBBYTES - 8
+#define FIXED_FIELD_SIZE 4
 #define INVOCATION_FIELD_SIZE 8
 
 #define AGNO_HEADER_SIZE sizeof(struct agno_header)
@@ -94,7 +85,7 @@ static int vde_agno_close(VDECONN *conn);
 /* Header added to packets; is is used as nonce (IV) */
 struct agno_header {
 	uint32_t time;
-	uint8_t nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+	uint8_t nonce[NONCE_SIZE];
 };
 
 /* Declaration of the connection sructure of the module */
@@ -103,9 +94,10 @@ struct vde_agno_conn {
 	struct vdeplug_module *module;
 	VDECONN *conn;
 	/* Plug-in data */
-	uint8_t key[crypto_aead_xchacha20poly1305_ietf_KEYBYTES];
-	/* Nonce information */
-	uint8_t rand_id[FIXED_FIELD_SIZE];
+	uint8_t cryptkey[AES128_KEY_SIZE];
+	gnutls_aead_cipher_hd_t aes_gcm_ctx;
+	/* RANDOM FIXED FIELD */
+	uint8_t agno_id[FIXED_FIELD_SIZE];
 	uint64_t counter;
 };
 
@@ -149,14 +141,14 @@ static int get_cryptkey(const char *keyfile, uint8_t *cryptkey) {
 	FILE *fp;
 
 	/* Reset cryptkey */
-	memset(cryptkey, 0, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
+	memset(cryptkey, 0, AES128_KEY_SIZE);
 
 	/* Open the keyfile */
 	if ((fp = fopen(keyfile, "r")) == NULL)
 		return -1;
 
 	/* 32 character + optional '\n' + '\0' */
-	const size_t bufsize = crypto_aead_xchacha20poly1305_ietf_KEYBYTES * 2 + 2;
+	const size_t bufsize = AES128_KEY_SIZE * 2 + 2;
 	char buf[bufsize];
 
 	if (fgets(buf, bufsize, fp) == NULL)
@@ -178,7 +170,7 @@ static int get_cryptkey(const char *keyfile, uint8_t *cryptkey) {
 		actual_len--;
 	}
 
-	if (actual_len != crypto_aead_xchacha20poly1305_ietf_KEYBYTES * 2) {
+	if (actual_len != AES128_KEY_SIZE * 2) {
 		errno = EKEYREJECTED;
 		return -1;
 	}
@@ -191,7 +183,7 @@ static int get_cryptkey(const char *keyfile, uint8_t *cryptkey) {
 	}
 
 	/* Convert the string from hexadecimal to bytes */
-	for (size_t i = 0; i < crypto_aead_xchacha20poly1305_ietf_KEYBYTES; i++)
+	for (size_t i = 0; i < AES128_KEY_SIZE; i++)
 		cryptkey[i] = hexchars_to_byte(buf[i*2], buf[i*2+1]);
 
 	DEBUG_PRINT("end\n");
@@ -235,7 +227,7 @@ static char *get_cryptkey_file(const char *arg) {
 		snprintf(path, PATH_MAX, "%s/" DEFAULT_KEYFILE, result->pw_dir);
 	else if (*arg == '~')
 		/* keyfile based on home directory */
-		snprintf(path, PATH_MAX, "%s%s", result->pw_dir, arg + 1);
+		snprintf(path, PATH_MAX, "%s/%s", result->pw_dir, arg + 1);
 	else if (*arg == '/')
 		/* keyfile is an absolute path */
 		snprintf(path, PATH_MAX, "%s", arg);
@@ -255,11 +247,12 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 	struct vde_agno_conn *agno_conn = NULL;
 	char *nested_url;
 
+	struct vdeparms parms[] = {{NULL, NULL}};
+
 	VDECONN *conn;
 
 	nested_url = vde_parsenestparms(vde_url);
-
-	if (vde_parsepathparms(vde_url, NULL) != 0)
+	if (vde_parsepathparms(vde_url, parms) != 0)
 		return NULL;
 
 	/* Open connection with nested url */
@@ -274,27 +267,31 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 	char *keyfile = get_cryptkey_file(vde_url);
 	if (keyfile == NULL)
 		goto error;
-	if (get_cryptkey(keyfile, agno_conn->key) == -1) {
+	if (get_cryptkey(keyfile, agno_conn->cryptkey) == -1) {
 		free(keyfile);
 		goto error;
 	}
 	free(keyfile);
 
-	/* Init libsodium */
-	if (sodium_init() < 0)
-        goto error;
+	const gnutls_datum_t cryptkey = {agno_conn->cryptkey, 16};
 
-	/* Init counter */
+	int ret;
+	/* Initialize authenticated symmetric encryption context */
+	if ((ret = gnutls_aead_cipher_init(&agno_conn->aes_gcm_ctx, GNUTLS_CIPHER_AES_128_GCM, &cryptkey)) < 0) {
+		DEBUG_PRINT("gnutls_aead_cipher_init - %s\n", gnutls_strerror(ret));
+		errno = EAGAIN;
+		goto error;
+	}
+
 	agno_conn->counter = 0;
 
-	/* Init random ID */
-	randombytes_buf(agno_conn->rand_id, FIXED_FIELD_SIZE);
-
-	printf("agno id: [");
-	for (size_t i = 0; i < FIXED_FIELD_SIZE; i++) {
-		printf("%x", agno_conn->rand_id[i]);
+	/* Init rand bytes of the nonce */
+	if (gnutls_rnd(GNUTLS_RND_NONCE, agno_conn->agno_id, FIXED_FIELD_SIZE) < 0) {
+		errno = EAGAIN;
+		goto error;
 	}
-	printf("]\n");
+
+	DEBUG_PRINT("agno id: %x\n", *((uint32_t *) agno_conn->agno_id));
 
 	DEBUG_PRINT("Initialization completed\n");
 
@@ -324,12 +321,12 @@ void print_enc_packet(const uint8_t *enc_packet, const size_t enc_packet_size) {
 
 	fprintf(stderr, "| ");
 
-	for (size_t i = 0; i < secure_data_icv_size - crypto_aead_xchacha20poly1305_ietf_ABYTES; i++)
+	for (size_t i = 0; i < secure_data_icv_size - ICV_SIZE; i++)
 		fprintf(stderr, "%x ", secure_data_icv[i]);
 
 	fprintf(stderr, "| ");
 
-	for (size_t i = secure_data_icv_size - crypto_aead_xchacha20poly1305_ietf_ABYTES; i < secure_data_icv_size; i++)
+	for (size_t i = secure_data_icv_size - ICV_SIZE; i < secure_data_icv_size; i++)
 		fprintf(stderr, "%x ", secure_data_icv[i]);
 
 	fprintf(stderr, "\n");
@@ -355,7 +352,7 @@ static ssize_t vde_agno_recv(VDECONN *conn, void *buf, size_t len, int flags) {
 	if (retval < ETH_HEADER_SIZE)
 		return 1;
 
-	// DEBUG_PRINT("Received lenght -> %d\n", (int) retval);
+	DEBUG_PRINT("Received lenght -> %d\n", (int) retval);
 
 	/** Mapping of the plain packet **/
 	struct ether_header *ehdr = (struct ether_header *) buf;
@@ -363,30 +360,27 @@ static ssize_t vde_agno_recv(VDECONN *conn, void *buf, size_t len, int flags) {
 
 	/** Mapping of the encrypted packet **/
 	/* NOTE: we are not sure if the recvbuf contains a valid encrypted packet */
-	struct ether_header *auth_ehdr = (struct ether_header *) recvbuf;
-	struct agno_header *auth_ahdr = (struct agno_header *) (auth_ehdr + 1);
+	struct ether_header *enc_ehdr = (struct ether_header *) recvbuf;
+	struct agno_header *enc_ahdr = (struct agno_header *) (enc_ehdr + 1);
 	/* Secure data (without ICV) */
-	uint8_t *secure_data = (uint8_t *) (auth_ahdr + 1);
-																					/* Tag lenght */
-	const size_t secure_data_size = retval - (ETH_HEADER_SIZE + AGNO_HEADER_SIZE + crypto_aead_xchacha20poly1305_ietf_ABYTES);
+	uint8_t *secure_data = (uint8_t *) (enc_ahdr + 1);
+	const size_t secure_data_size = retval - (ETH_HEADER_SIZE + AGNO_HEADER_SIZE + ICV_SIZE);
 	/* NOTE: ICV is found after secure_data */
 
 	// fprintf(stderr, "PACCHETTO IN ENTRATA\n");
 	// print_enc_packet(recvbuf, retval);
 
 	/* Now - timestamp >= -1 && Now - timestamp <= 2 */
-	if ((time(NULL) - ntohl(auth_ahdr->time) + 1) & ~3) {
+	if ((time(NULL) - ntohl(enc_ahdr->time) + 1) & ~3) {
 		DEBUG_PRINT("Packet expired\n");
 		return 1;
 	}
 
 	/* Copy plain Ethernet header */
-	memcpy(ehdr, auth_ehdr, ETH_HEADER_SIZE);
+	memcpy(ehdr, enc_ehdr, ETH_HEADER_SIZE);
 
-	/* Get host order nonce */
-	// uint8_t nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-	// uint8_t *fixed_field = (uint8_t *) nonce;
-	// uint64_t *invocation_field = (uint64_t *) (fixed_field + FIXED_FIELD_SIZE);
+	/* Return value for gnutls_aead_cipher_decrypt() */
+	int ret;
 
 	/* Buffer for secure data decryption */
 	uint8_t plain_secure_data[secure_data_size];
@@ -395,11 +389,13 @@ static ssize_t vde_agno_recv(VDECONN *conn, void *buf, size_t len, int flags) {
 
 	size_t plain_secure_data_size = secure_data_size;
 
-	if (crypto_aead_xchacha20poly1305_ietf_decrypt(plain_secure_data, (unsigned long long *) &plain_secure_data_size, NULL,
-                                               secure_data, secure_data_size + crypto_aead_xchacha20poly1305_ietf_ABYTES,
-                                               recvbuf, ETH_HEADER_SIZE + AGNO_HEADER_SIZE,
-                                               auth_ahdr->nonce, agno_conn->key) < 0) {
-		DEBUG_PRINT("Decryption failed\n");
+	if ((ret = gnutls_aead_cipher_decrypt(agno_conn->aes_gcm_ctx,
+				enc_ahdr->nonce, NONCE_SIZE,		/* Agno header as nonce (IV) */
+				recvbuf, ETH_HEADER_SIZE + AGNO_HEADER_SIZE, /* Headers as authenticated data */
+				ICV_SIZE,
+				secure_data, secure_data_size + ICV_SIZE, /* Secure data + ICV */
+				plain_secure_data, &plain_secure_data_size)) < 0) {
+		DEBUG_PRINT("%s\n", gnutls_strerror(ret));
 		return 1;
 	}
 
@@ -430,34 +426,32 @@ static ssize_t vde_agno_send(VDECONN *conn, const void *buf, size_t len, int fla
 	/* NOTE: AES-GCM is a stream cipher (no padding) */
 	const size_t secure_data_size = payload_size + sizeof(uint16_t /* old EtherType */);
 	/* Lenght of the entire encrypted packet */
-	const size_t enclen = ETH_HEADER_SIZE + AGNO_HEADER_SIZE + secure_data_size + crypto_aead_xchacha20poly1305_ietf_ABYTES;
+	const size_t enclen = ETH_HEADER_SIZE + AGNO_HEADER_SIZE + secure_data_size + ICV_SIZE;
 
 	/* buffer for the encrypted packet */
 	uint8_t encbuf[enclen];
 	/** Mapping of the encrypted packet **/
-	struct ether_header *auth_ehdr = (struct ether_header *) encbuf;
-	struct agno_header *auth_ahdr = (struct agno_header *) (auth_ehdr + 1);
+	struct ether_header *enc_ehdr = (struct ether_header *) encbuf;
+	struct agno_header *enc_ahdr = (struct agno_header *) (enc_ehdr + 1);
 	/* Secure data (EtherType of the plain packet and payload) */
-	uint8_t *secure_data = (uint8_t *) (auth_ahdr + 1);
+	uint8_t *secure_data = (uint8_t *) (enc_ahdr + 1);
 	/* NOTE: ICV is found after secure_data */
 
 	/* Copy the plain ethernet header */
-	*auth_ehdr = *ehdr;
-	auth_ehdr->ether_type = htons(AGNO_TYPE);
+	*enc_ehdr = *ehdr;
+	enc_ehdr->ether_type = htons(AGNO_TYPE);
 
-	/* Set network order time */
-	auth_ahdr->time = htonl(time(NULL));
-
-	/* TODO: network order nonce */
-	uint8_t nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-	uint8_t *fixed_field = nonce;
-	uint64_t *invocation_field = (uint64_t *) (fixed_field + FIXED_FIELD_SIZE);
-	memcpy(fixed_field, agno_conn->rand_id, FIXED_FIELD_SIZE);
+	/* Initialize agno header */
+	enc_ahdr->time = htonl(time(NULL));
+	memcpy(enc_ahdr->nonce, agno_conn->agno_id, FIXED_FIELD_SIZE);
+	uint64_t *invocation_field = (uint64_t *) (enc_ahdr->nonce + FIXED_FIELD_SIZE);
 	*invocation_field = agno_conn->counter;
 	agno_conn->counter++;
 
-	memcpy(auth_ahdr->nonce, nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+	/* Return value for gnutls_aead_cipher_encrypt() */
+	int ret;
 
+	/* NOTE: we could use gnutls_aead_cipher_encryptv */
 	uint8_t plain_secure_data[secure_data_size];
 	uint16_t *plain_ether_type = (uint16_t *) plain_secure_data;
 	uint8_t *plain_payload = (uint8_t *) (plain_ether_type + 1);
@@ -465,25 +459,25 @@ static ssize_t vde_agno_send(VDECONN *conn, const void *buf, size_t len, int fla
 	*plain_ether_type = ehdr->ether_type;
 	memcpy(plain_payload, payload, payload_size);
 
-	size_t secure_data_icv_len = secure_data_size + crypto_aead_xchacha20poly1305_ietf_ABYTES;
+	size_t secure_data_icv_len = secure_data_size + ICV_SIZE;
 
-	if (crypto_aead_xchacha20poly1305_ietf_encrypt(secure_data, (unsigned long long *) &secure_data_icv_len,
-                                           plain_secure_data, secure_data_size,
-                                           encbuf, ETH_HEADER_SIZE + AGNO_HEADER_SIZE, /* Authenticate headers */
-                                           NULL, nonce, agno_conn->key) < 0) {
-		DEBUG_PRINT("Encryption failed.\n");
+	if ((ret = gnutls_aead_cipher_encrypt(agno_conn->aes_gcm_ctx,
+				enc_ahdr->nonce, NONCE_SIZE,		/* Agno header as nonce (IV) */
+				encbuf, ETH_HEADER_SIZE + AGNO_HEADER_SIZE, /* Authenticate headers */
+				ICV_SIZE,
+				plain_secure_data, secure_data_size,
+				secure_data, &secure_data_icv_len)) < 0) {
+		DEBUG_PRINT("%s\n", gnutls_strerror(ret));
 		errno = EAGAIN;
 		return -1;
 	}
 
-	assert(secure_data_icv_len == secure_data_size + crypto_aead_xchacha20poly1305_ietf_ABYTES);
+	assert(secure_data_icv_len == secure_data_size + ICV_SIZE);
 
 	// fprintf(stderr, "PACCHETTO IN USCITA\n");
 	// print_enc_packet(encbuf, enclen);
 
 	ssize_t retval = vde_send(agno_conn->conn, encbuf, enclen, flags);
-
-	// DEBUG_PRINT("enclen -> %d, retval -> %d\n", (int) enclen, (int) retval);
 
 	if (retval == enclen)
 		return len;
@@ -504,5 +498,9 @@ static int vde_agno_ctlfd(VDECONN *conn) {
 
 static int vde_agno_close(VDECONN *conn) {
 	struct vde_agno_conn *agno_conn = (struct vde_agno_conn *) conn;
+
+	/* Clean context */
+	gnutls_aead_cipher_deinit(agno_conn->aes_gcm_ctx);
+
 	return vde_close(agno_conn->conn);
 }
