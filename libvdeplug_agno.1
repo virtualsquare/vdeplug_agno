@@ -2,89 +2,112 @@
 .\" Copyright (C) 2018 Michele Nalli. University of Bologna. <michele.nalli@studio.unibo.it>
 .\"
 .\" This library is free software; you can redistribute it and/or
-.\" modify it under the terms of the GNU Lesser General Public
+.\" modify it under the terms of the GNU General Public
 .\" License as published by the Free Software Foundation; either
-.\" version 2.1 of the License, or (at your option) any later version.
+.\" version 3 of the License, or (at your option) any later version.
 .\"
 .\" This library is distributed in the hope that it will be useful,
 .\" but WITHOUT ANY WARRANTY; without even the implied warranty of
 .\" MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 .\" Lesser General Public License for more details.
 .\"
-.\" You should have received a copy of the GNU Lesser General Public
-.\" License along with this library; if not, write to the Free Software
-.\" Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+.\" You should have received a copy of the GNU General Public
+.\" License along with this library; If not, see <http://www.gnu.org/licenses/>.
 
 .TH LIBVDEPLUG_AGNO 1 "April 30, 2017" "Virtual Distributed Ethernet"
 
 .SH NAME
-libvdeplug_agno \- vdeplug module: add encryption to ethernet link plug
+libvdeplug_agno \- vdeplug module: add encryption to Ethernet link plug
 .SH SYNOPSIS
 libvdeplug_agno.so
 .SH DESCRIPTION
-This is a libvdeplug cryptographic module that implements agnostic encryption
-over layer 2.
-Agnostic encryption is an encryption method that doesn't need information about
-the lenght of the ip packet.
+This is a libvdeplug cryptographic module that implements Layer 2 encryption.
+This encryption method is protocol agnostic (hence agno), because the payload
+of the Ethernet packet (containing Layer 3 and Layer 4 headers) is encrypted.
+Such a packet couldn't be routed without being first decrypted. The MAC addresses
+are authenticated.
 
-This module of libvdeplug4 can be used in any program supporting vde, like
-\fBvde_plug\fR, \fBkvm\fR, \fBqemu\fR, \fBuser-mode-linux\fR and \fBvirtualbox\fR.
+The main purpose of agno is to guarantee security in situations where, on the
+same physical machine, users have shell access and also access to the net cable.
+In such a situation, VMs running on the host will exchange traffic with other
+VMs of the same VDE LAN running on other physical hosts through a physical network
+interface (e.g. using vxvde, udp, a bridged tap interface, ssh with cmd plugin).
+If the user has access to the net cable these packets can be captured, for this
+reason we must ensure that packets sent by VMs, both on that machine and on other
+machines are encrypted.
+
+In this situation if cryptography is already implemented (e.g. using ssh
+tunneling) agno has no reason to be used.
+
+agno could also be used as an alternative to MACsec (IEEE 802.1AE) for securing
+a physical LAN (see EXAMPLES).
+
+This module of libvdeplug4 can be used in any program supporting VDE, like
+.BR vde_plug , " kvm" , " qemu" , " user-mode-linux " and " virtualbox" .
 
 The vde_plug_url syntax of this module is the following:
 .RS
-.B agno://{\fIvde nested url\fP}
-.br
-.B agno://\fR[/path/to/keyfile]\fB[\fI[OPTION]\fP]{\fIvde nested url\fP}
-.br
+.BI agno://{ "vde nested url" }
+
+.BI agno://[ /path/to/keyfile ]{ "vde nested url" }
 .RE
 
-\fI/path/to/keyfile\fR if present, it must be an absolute path or a path relative
-to the user's home (~/example/path).
-If omitted the path of the keyfile is ~/.vde_agno_key.
-The keyfile must contain a 128-bit key in hexadecimal format.
-Only hexadecimal caracters are considered in both uppercase and lowercase, all
-the others are ignored (e.g. whitespaces, newline characters, non-hexadecimal letters).
-.SH OPTIONS
-.TP
-\fBethtype=\fR\fITYPE
-define the type of the Ethernet frame of the encrypted packet.
-\fITYPE\fR can be the number that specifies the bytes of the type.
+.I /path/to/keyfile
+.R could be an absolute path, a path relative to the user's
+home (e.g. ~/example/path) or, if starting with a letter of the alphabet, a path
+relative to the default key folder (e.g. key --> ~/.vde_agno/key).
 
-\fITYPE\fR can be also be a string value such as copy, ipv4, ipv6, rand.
-.RS
-.B \fIcopy\fR: same type of the non-encrypted packet.
-.br
-.B \fIipv4\fR: ipv4 type (0x0800).
-.br
-.B \fIipv6\fR: ipv6 type (0x86dd).
-.br
-.B \fIrand\fR: random number as type. The random number will be generated for
-every Ethernet packet sent.
+If omitted the path of the key file is ~/.vde_agno/default_key. The key file
+must contain a 128-bit key in hexadecimal format (32 hex characters) without
+whitespaces or other characters not belonging to the key. The only character
+allowed is a newline character after the key and before the end of the file.
+
 .RE
 .SH EXAMPLES
 .B vde_plug agno://{vde:///tmp/myswitch}
 .br
-agno uses the key stored in the default keyfile (~/.vde_agno_key) location to
-encrypt the traffic sent to the switch. The Ethernet frames will have agno
-specific type (0xa6de) as type.
+agno uses the key stored in the default keyfile location to encrypt the traffic
+sent to the switch. The Ethernet frames will have agno EtherType. Usually you
+don't want to use agno in such a way; agno should be used as a gateway placed
+before the packets of the virtual LAN leave the physical machine. As far as the
+virtual LAN segment is on the same physical machine, security can be guaranteed
+without the use of cryptography, i.e. structuring the virtual LAN correctly.
+
+.B vde_plug agno:///etc/agno/vxvde/234.0.0.1{vxvde://234.0.0.1}
 .br
-.B vde_plug agno:///tmp/my_keyfile[ethtype=copy]{vde:///tmp/myswitch}
+agno uses the key stored in system file /etc/agno/vxvde/234.0.0.1 to encrypt the
+traffic sent to vxvde. vxvde will encapsulate the encrypted agno ethernet packet
+in an UDP packet in a MAC-in-UDP fashion and send to IP multicast address 234.0.0.1.
+The user starting agno should have read access to the keyfile (belong to a
+group of privileged users who can read the key). The same key should be used for
+all users using vxvde with 234.0.0.1 address.
+
+.B vde_plug agno://udp_ptp{udp://2000->host_b.domain_b.org:3000}
 .br
-agno uses the key stored in file /tmp/my_keyfile to encrypt the traffic sent to
-the switch. The Ethernet frames will have the same type of the non-encrypted packet.
-(0xa6de) as type.
+agno uses the key stored in ~/.vde_agno/udp_ptp. The encrypted traffic will be
+encapsulated in UDP packets sent by the physical host realizing a point-to-point
+connection. In such a way we overcome the limit of Layer 2 cryptography: the UDP
+packets can be routed. External ethernet header, IP header and UDP header are
+non-authenticated and as such they can be modified.
+
+.B vde_plug agno:///etc/agno/tap/brtap{tap://brtap}
 .br
-.B agno://[ethtype=rand]{vxvde://234.0.0.1}
+agno uses the key stored in system file /etc/agno/tap/brtap to encrypt the traffic
+sent to the tap interface brtap. brtap can be assigned to a bridge created with
+brctl that forwards the traffic to through the physical net interface over the
+real LAN.
 .br
-agno uses the key stored in the default keyfile (~/.vde_agno_key) location to
-encrypt the traffic sent to vxvde. Packets sent will have tag.
+This could be useful for securing a non-physically-secure LAN without having to
+deploy MACsec.
+
 .SH NOTICE
 Virtual Distributed Ethernet is not related in any way with
 www.vde.com ("Verband der Elektrotechnik, Elektronik und Informationstechnik"
 i.e. the German "Association for Electrical, Electronic & Information
 Technologies").
+
 .SH SEE ALSO
-\fBvde_plug\fP(1).
+.BR vde_plug (1).
 .SH BUGS
 Bug reports should be addressed to <info@virtualsquare.org>
 .SH AUTHOR

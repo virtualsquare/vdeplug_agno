@@ -1,14 +1,14 @@
-# vdeplug\_agno
+# vdeplug_agno
 
 This is a libvdeplug plugin module to add encryption to a vde connection. It is based on the openssl library.
 
-This module of libvdeplug4 can be used in any program supporting VDE like vde\_plug, kvm, qemu, user-mode-linux and virtualbox.
+This module of libvdeplug4 can be used in any program supporting VDE like vde_plug, kvm, qemu, user-mode-linux and virtualbox.
 
-## install vdeplug\_agno
+## install vdeplug_agno
 
 Requirements: [vdeplug4](https://github.com/rd235/vdeplug4) and openssl.
 
-vdeplug\_agno uses the auto-tools, so the standard procedure to build and install this vdeplug plugin module is the following:
+vdeplug_agno uses the auto-tools, so the standard procedure to build and install this vdeplug plugin module is the following:
 ```
 $ autoreconf -if
 $ ./configure
@@ -33,4 +33,4 @@ supporting vde as specified by the syntax of those programs.
 ## Create a vde namespace connected to a vxvde network with encrypted traffic
 ```vdens agno:///tmp/my_keyfile{vxvde://}```
 
-See the man page (libvdeplug_agno) for further information.
+See the man page (libvdeplug_agno) for more information.
