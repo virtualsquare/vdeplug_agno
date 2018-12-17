@@ -87,7 +87,7 @@ We can set up the bridge this way:
 # create a tap
 $ sudo ip tuntap add name tap0 mode tap
 # create a bridge
-sudo brctl addbr br0
+$ sudo brctl addbr br0
 # assign eth0 and tap0 as bridge interfaces
 $ sudo brctl addif br0 eth0
 $ sudo brctl addif br0  tap0
