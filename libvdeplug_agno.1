@@ -22,22 +22,21 @@ libvdeplug_agno \- vdeplug module: add encryption to Ethernet link plug
 libvdeplug_agno.so
 .SH DESCRIPTION
 This is a libvdeplug cryptographic module that implements Layer 2 encryption.
-This encryption method is protocol agnostic (hence agno), because the payload
-of the Ethernet packet (containing Layer 3 and Layer 4 headers) is encrypted.
-Such a packet couldn't be routed without being first decrypted. The MAC addresses
-are authenticated.
+Layer 2 encryption is protocol agnostic (hence agno), because all the traffic
+is encrypted, layer 2 protocol packets included.
+Encrypted traffic couldn't be routed without being first decrypted (IP headers
+are encrypted). Ethernet headers are authenticated only, this means that switches
+can dispatch encrypted traffic.
 
-The main purpose of agno is to guarantee security in situations where, on the
-same physical machine, users have shell access and also access to the net cable.
-In such a situation, VMs running on the host will exchange traffic with other
-VMs of the same VDE LAN running on other physical hosts through a physical network
-interface (e.g. using vxvde, udp, a bridged tap interface, ssh with cmd plugin).
-If the user has access to the net cable these packets can be captured, for this
-reason we must ensure that packets sent by VMs, both on that machine and on other
-machines are encrypted.
+agno is meant to be used mainly with vxvde in situations where administrators
+want to allow users to have unrestricted shell access to the physical machine.
+vxvdex allow users to have shell access but with the restriction that users
+must live in a network namespace where the net can be accessed only through
+vxvdex. If users have direct access to the real network interface, virtual
+traffic must be encrypted.
 
-In this situation if cryptography is already implemented (e.g. using ssh
-tunneling) agno has no reason to be used.
+agno can be used, with udp plug-in, to create encrypted vde cables without
+using the old vde_cryptcab or ssh (see libvdeplug_cmd man page).
 
 agno could also be used as an alternative to MACsec (IEEE 802.1AE) for securing
 a physical LAN (see EXAMPLES).
@@ -58,7 +57,7 @@ home (e.g. ~/example/path) or, if starting with a letter of the alphabet, a path
 relative to the default key folder (e.g. key --> ~/.vde_agno/key).
 
 If omitted the path of the key file is ~/.vde_agno/default_key. The key file
-must contain a 128-bit key in hexadecimal format (32 hex characters) without
+must contain a 256-bit key in hexadecimal format (64 hex characters) without
 whitespaces or other characters not belonging to the key. The only character
 allowed is a newline character after the key and before the end of the file.
 
@@ -82,13 +81,11 @@ The user starting agno should have read access to the keyfile (belong to a
 group of privileged users who can read the key). The same key should be used for
 all users using vxvde with 234.0.0.1 address.
 
-.B vde_plug agno://udp_ptp{udp://2000->host_b.domain_b.org:3000}
+.B vde_plug agno://udp_ptp{udp://"2000->host_b.domain_b.org:3000"}
 .br
 agno uses the key stored in ~/.vde_agno/udp_ptp. The encrypted traffic will be
 encapsulated in UDP packets sent by the physical host realizing a point-to-point
-connection. In such a way we overcome the limit of Layer 2 cryptography: the UDP
-packets can be routed. External ethernet header, IP header and UDP header are
-non-authenticated and as such they can be modified.
+connection. In such a way an encrypted vde cable is created.
 
 .B vde_plug agno:///etc/agno/tap/brtap{tap://brtap}
 .br
