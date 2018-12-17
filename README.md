@@ -58,7 +58,7 @@ The management of permissions becomes very similar to the one in vxvdex.
 One of the simplest usages of agno is with vxvde, which is, as said before, the reason why it is needed.
 The administrators may decide to assign a key to a vxvde IP multicast so that to see all the authorized traffic it is enough to use agno with that key. All the VMs connected to that vxvde IP address must use agno with the specified key.
 ```console
-vde_plug agno:///etc/agno/vxvde/234.0.0.1{vxvde://234.0.0.1}
+$ vde_plug agno:///etc/agno/vxvde/234.0.0.1{vxvde://234.0.0.1}
 ```
 In this example/etc/agno/vxvde/234.0.0.1 is the path of the file containing the key that should be used to connect with IP multicast address 234.0.0.1.
 A user could of course define his own key to start encrypt the communication of his own VMs.
@@ -70,9 +70,9 @@ agno can be used combined with the udp plug-in to create an encrypted connection
 
 ```console
 # on host a
-vde_plug switch:// agno://~udp_key{"udp://1000->hostb:2000"}
+$ vde_plug switch:// agno://~udp_key{"udp://1000->hostb:2000"}
 # on host b
-vde_plug switch:// agno://~udp_key{"udp://2000->hosta:1000"}
+$ vde_plug switch:// agno://~udp_key{"udp://2000->hosta:1000"}
 ```
 
 ![agno + udp](https://github.com/rd235/vdeplug_agno/blob/libsodium_static/img/agno%2Budp.png)
@@ -85,16 +85,16 @@ We can set up the bridge this way:
 ```console
 # configure physical host network interfaces
 # create a tap
-sudo ip tuntap add name tap0 mode tap
+$ sudo ip tuntap add name tap0 mode tap
 # create a bridge
 sudo brctl addbr br0
 # assign eth0 and tap0 as bridge interfaces
-sudo brctl addif br0 eth0
-sudo brctl addif br0  tap0
+$ sudo brctl addif br0 eth0
+$ sudo brctl addif br0  tap0
 # enable all the interfaces
-sudo ip link set eth0 up
-sudo ip link set br0 up
-sudo ip link set tap0 up
+$ sudo ip link set eth0 up
+$ sudo ip link set br0 up
+$ sudo ip link set tap0 up
 ```
 
 Here we don’t need sudo anymore.
@@ -103,11 +103,11 @@ The following is an example of how we can start a virtual host that uses agno an
 
 ```console
 # start vdens
-vdens agno:///etc/agno/tap/LAN{tap://tap0}
-ip link set vde0 up
+$ vdens agno:///etc/agno/tap/LAN{tap://tap0}
+$ ip link set vde0 up
 # assign ip
-ip addr add 10.0.0.2/24 dev vde0
-# dhclient vde0 -v → to use a dynamic ip we must have a dhcp server in a vdens that uses agno
+$ ip addr add 10.0.0.2/24 dev vde0
+# dhclient vde0 -v --> to use a dynamic ip we must have a dhcp server in a vdens that uses agno
 ```
 
 This vdens will be able to see only hosts using agno with his same key.
