@@ -20,6 +20,7 @@ LT_INIT
 AC_CHECK_LIB([vdeplug], [vde_open_real], [], [exit])
 AC_CHECK_LIB([vdeplug_mod], [vde_parseparms], [], [exit])
 AC_CHECK_LIB([gnutls], [gnutls_cipher_init], [], [exit])
+AC_CHECK_LIB([config], [config_init], [], [exit])
 
 # Checks for header files.
 AC_CHECK_HEADERS([fcntl.h stdint.h stdlib.h string.h unistd.h syslog.h libvdeplug.h libvdeplug_mod.h])
