@@ -33,8 +33,9 @@
 #include <net/if.h>
 #include <net/ethernet.h>
 #include <arpa/inet.h>
-#include <openssl/aes.h>
-#include <openssl/rand.h>
+#include <wolfssl/options.h>
+#include <wolfssl/openssl/aes.h>
+#include <wolfssl/openssl/rand.h>
 #include <libvdeplug.h>
 #include <libvdeplug_mod.h>
 
