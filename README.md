@@ -8,10 +8,11 @@ This module of libvdeplug4 can be used in any program supporting VDE like vde\_p
 
 Requirements: [vdeplug4](https://github.com/rd235/vdeplug4) and openssl.
 
-vdeplug\_agno uses the auto-tools, so the standard procedure to build and install this vdeplug plugin module is the following:
+vdeplug\_agno uses cmake, so the standard procedure to build and install this vdeplug plugin module is the following:
 ```
-$ autoreconf -if
-$ ./configure
+$ mkdir build
+$ cd build
+$ cmake ..
 $ make
 $ sudo make install
 ```
