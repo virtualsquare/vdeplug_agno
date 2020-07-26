@@ -37,11 +37,13 @@
 #include <openssl/rand.h>
 #include <libvdeplug.h>
 #include <libvdeplug_mod.h>
+#include <strcase.h>
 
    // 128-bit key
    // openssl enc -aes-128-cbc -k secret -P -md sha1
 
 #define DEFAULT_KEYFILE ".vde_agno_key"
+//#define DEBUG_DISABLE_ENCRYPTION
 
 static VDECONN *vde_agno_open(char *vde_url, char *descr,int interface_version,
 		struct vde_open_args *open_args);
@@ -92,7 +94,7 @@ struct vdeplug_module vdeplug_ops={
 };
 
 /* keyfile  - path of the keyfile
-	 cryptkey - buffer where the decrypted key will be placed; it should contain 16 elements.
+	 cryptkey - buffer where the decrypted key will be placed; it should contain 16 bytes.
 	 Returns 0 on success, -1 on error. */
 static int getcryptkey(char *keyfile, unsigned char *cryptkey) {
 	/* passwd file entry */
@@ -191,39 +193,47 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 		goto error;
 	}
 	newconn->conn=conn;
-	if (strcmp(ethtype,"copy") == 0)
-		/* Mantain the type of the non-encrypted packet */
-		newconn->ether_type = 0x0;
-	/* htons() converts the unsigned short integer hostshort
-		 from host byte order to network byte order. */
-	else if (strcmp(ethtype,"ipv4") == 0)
-		/* Set ipv4 type */
-		newconn->ether_type = htons(ETHERTYPE_IP);	/* 0x0800 */
-	else if (strcmp(ethtype,"ipv6") == 0)
-		/* Set ipv6 type */
-		newconn->ether_type = htons(ETHERTYPE_IPV6);	/* 0x86dd */
-	else if (strcmp(ethtype,"rand") == 0)
-		/* Generates random number as type */
-		newconn->ether_type = htons(0xffff);
-	else {
-		char *endptr;
-		unsigned long type = strtoul(ethtype, &endptr, 0);
-		if (ethtype == endptr && strcmp(ethtype, "") != 0) { /* ethtype doesn't contain a number */
-			errno = EINVAL;
-			goto error;
-		}
-		if (type == 0)
-			newconn->ether_type = htons(AGNO_TYPE);
-		else if (type >= 0x600 && type < 0xffff) /* The input tag is valid */
-			newconn->ether_type = htons(type);
-		else {
-			errno = EINVAL;
-			goto error;
-		}
+	switch (strcase(ethtype)) {
+		case STRCASE(c,o,p,y):
+			/* Mantain the type of the non-encrypted packet */
+			newconn->ether_type = 0x0;
+			/* htons() converts the unsigned short integer hostshort
+				 from host byte order to network byte order. */
+			break;
+		case STRCASE(i,p,v,4):
+			/* Set ipv4 type */
+			newconn->ether_type = htons(ETHERTYPE_IP);	/* 0x0800 */
+			break;
+		case STRCASE(i,p,v,6):
+			/* Set ipv6 type */
+			newconn->ether_type = htons(ETHERTYPE_IPV6);	/* 0x86dd */
+		case STRCASE(r,a,n,d):
+			/* Generates random number as type */
+			newconn->ether_type = htons(0xffff);
+		default: {
+							 char *endptr;
+							 unsigned long type = strtoul(ethtype, &endptr, 0);
+							 if (ethtype == endptr && strcmp(ethtype, "") != 0) {
+							 /* ethtype doesn't contain a number */
+								 errno = EINVAL;
+								 goto error;
+							 }
+							 if (type == 0)
+								 newconn->ether_type = htons(AGNO_TYPE);
+							 else if (type >= 0x600 && type < 0xffff) 
+								 /* The input tag is valid */
+								 newconn->ether_type = htons(type);
+							 else {
+								 errno = EINVAL;
+								 goto error;
+							 }
+						 }
 	}
 	/* Set key as encryption and decryption key */
+#ifndef DEBUG_DISABLE_ENCRYPTION
 	AES_set_encrypt_key(cryptkey, sizeof(cryptkey) * 8, &newconn->ekey);
 	AES_set_decrypt_key(cryptkey, sizeof(cryptkey) * 8, &newconn->dkey);
+#endif
 	return (VDECONN *) newconn;
 
 error:
@@ -248,9 +258,12 @@ static ssize_t vde_agno_recv(VDECONN *conn,void *buf,size_t len,int flags) {
 		goto error;
 	/* The Ethernet header is not encrypted, we can already copy it. */
 	memcpy(ehdr, encbuf, sizeof(*ehdr));
-	//memcpy(&ahdr, encbuf + sizeof(*ehdr), sizeof(ahdr));
 	/* Get decrypted agno header */
+#ifdef DEBUG_DISABLE_ENCRYPTION
+	memcpy(&ahdr, encbuf + sizeof(*ehdr), sizeof(ahdr));
+#else
 	AES_ecb_encrypt(encbuf + sizeof(*ehdr), (unsigned char *)&ahdr, &vde_conn->dkey, AES_DECRYPT);
+#endif
 	/* Tag check */
 	if (ahdr.tag != AGNO_TAG)
 		goto error;
@@ -259,12 +272,15 @@ static ssize_t vde_agno_recv(VDECONN *conn,void *buf,size_t len,int flags) {
 	memcpy(iv_dec, &ahdr, sizeof(iv_dec));
 	ehdr->ether_type = ahdr.ether_type;
 	retval -= ETH_HEADER_SIZE + (ahdr.flags & 0xf);
-	//memcpy(((unsigned char *) buf) + ETH_HEADER_SIZE, encbuf + sizeof(*ehdr) + sizeof(ahdr), retval - ETH_HEADER_SIZE); //Decrypt 2
 	/* Decrypt payload */
+#ifdef DEBUG_DISABLE_ENCRYPTION
+	memcpy(((unsigned char *) buf) + ETH_HEADER_SIZE, encbuf + sizeof(*ehdr) + sizeof(ahdr), retval - ETH_HEADER_SIZE); //Decrypt 2
+#else
 	AES_cbc_encrypt(
 			encbuf + sizeof(*ehdr) + sizeof(ahdr),
 			((unsigned char *) buf) + ETH_HEADER_SIZE,
 			retval - ETH_HEADER_SIZE, &vde_conn->dkey, iv_dec, AES_DECRYPT);
+#endif
 	return retval;
 error:
 	errno = EAGAIN;
@@ -308,16 +324,22 @@ static ssize_t vde_agno_send(VDECONN *conn,const void *buf, size_t len,int flags
 	}
 	/* Complete initialization of agno header */
 	RAND_bytes(ahdr.rand, 4);
-	//memcpy(encbuf + sizeof(*ehdr), &ahdr, sizeof(ahdr));
 	/* Encrypt agno header */
+#ifdef DEBUG_DISABLE_ENCRYPTION
+	memcpy(encbuf + sizeof(*ehdr), &ahdr, sizeof(ahdr));
+#else
 	AES_ecb_encrypt((unsigned char *)&ahdr, encbuf + sizeof(*ehdr), &vde_conn->ekey, AES_ENCRYPT);
+#endif
 	memcpy(iv_enc, &ahdr, sizeof(iv_enc));
-	//memcpy(encbuf + sizeof(*ehdr) + sizeof(ahdr), ((const unsigned char *) buf) + ETH_HEADER_SIZE, len - ETH_HEADER_SIZE);
 	/* Encrypt payload */
+#ifdef DEBUG_DISABLE_ENCRYPTION
+	memcpy(encbuf + sizeof(*ehdr) + sizeof(ahdr), ((const unsigned char *) buf) + ETH_HEADER_SIZE, len - ETH_HEADER_SIZE);
+#else
 	AES_cbc_encrypt(
 			((const unsigned char *) buf) + ETH_HEADER_SIZE,
 			encbuf + sizeof(*ehdr) + sizeof(ahdr),
 			len - ETH_HEADER_SIZE, &vde_conn->ekey, iv_enc, AES_ENCRYPT);
+#endif
 	retval = vde_send(vde_conn->conn, encbuf, enclen, flags);
 	if (retval == enclen)
 		return len;

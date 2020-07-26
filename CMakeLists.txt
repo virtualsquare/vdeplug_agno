@@ -10,7 +10,7 @@ include(CheckIncludeFile)
 
 set(CMAKE_REQUIRED_QUIET TRUE)
 set(LIBS_REQUIRED vdeplug_mod ssl crypto)
-set(HEADERS_REQUIRED libvdeplug.h openssl/aes.h openssl/rand.h)
+set(HEADERS_REQUIRED libvdeplug.h openssl/aes.h openssl/rand.h strcase.h)
 
 foreach(THISLIB IN LISTS LIBS_REQUIRED)
   find_library(LIB${THISLIB}_OK ${THISLIB})
