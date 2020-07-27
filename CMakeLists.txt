@@ -10,7 +10,8 @@ include(CheckIncludeFile)
 
 set(CMAKE_REQUIRED_QUIET TRUE)
 set(LIBS_REQUIRED vdeplug_mod ssl crypto)
-set(HEADERS_REQUIRED libvdeplug.h openssl/aes.h openssl/rand.h strcase.h)
+set(HEADERS_REQUIRED libvdeplug.h strcase.h wolfssl/options.h wolfssl/wolfcrypt/aes.h wolfssl/wolfcrypt/random.h)
+
 
 foreach(THISLIB IN LISTS LIBS_REQUIRED)
   find_library(LIB${THISLIB}_OK ${THISLIB})
@@ -30,7 +31,7 @@ add_definitions(-D_GNU_SOURCE)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(vdeplug_agno SHARED libvdeplug_agno.c)
-target_link_libraries(vdeplug_agno vdeplug_mod ssl crypto)
+target_link_libraries(vdeplug_agno vdeplug_mod wolfssl)
 
 install(TARGETS vdeplug_agno DESTINATION ${CMAKE_INSTALL_LIBDIR}/vdeplug)
 
