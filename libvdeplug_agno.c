@@ -271,7 +271,7 @@ static ssize_t vde_agno_recv(VDECONN *conn,void *buf,size_t len,int flags) {
 		goto error;
 	memcpy(iv_dec, &ahdr, sizeof(iv_dec));
 	ehdr->ether_type = ahdr.ether_type;
-	retval -= ETH_HEADER_SIZE + (ahdr.flags & 0xf);
+	retval -= sizeof(ahdr) + (ahdr.flags & 0xf);
 	/* Decrypt payload */
 #ifdef DEBUG_DISABLE_ENCRYPTION
 	memcpy(((unsigned char *) buf) + ETH_HEADER_SIZE, encbuf + sizeof(*ehdr) + sizeof(ahdr), retval - ETH_HEADER_SIZE); //Decrypt 2
@@ -358,6 +358,8 @@ static int vde_agno_ctlfd(VDECONN *conn) {
 }
 
 static int vde_agno_close(VDECONN *conn) {
-	struct vde_agno_conn *vde_conn = (struct vde_agno_conn *)conn;
-	return vde_close(vde_conn->conn);
+  struct vde_agno_conn *vde_conn = (struct vde_agno_conn *)conn;
+  int rv = vde_close(vde_conn->conn);
+  free(vde_conn);
+  return rv;
 }
