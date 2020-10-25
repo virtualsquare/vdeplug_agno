@@ -48,10 +48,10 @@
 
 #define DEFAULT_KEYFILE ".vde_agno_key"
 
-static VDECONN *vde_agno_open(char *vde_url, char *descr,int interface_version,
+static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 		struct vde_open_args *open_args);
-static ssize_t vde_agno_recv(VDECONN *conn,void *buf,size_t len,int flags);
-static ssize_t vde_agno_send(VDECONN *conn,const void *buf,size_t len,int flags);
+static ssize_t vde_agno_recv(VDECONN *conn, void *buf, size_t len, int flags);
+static ssize_t vde_agno_send(VDECONN *conn, const void *buf, size_t len, int flags);
 static int vde_agno_datafd(VDECONN *conn);
 static int vde_agno_ctlfd(VDECONN *conn);
 static int vde_agno_close(VDECONN *conn);
@@ -108,7 +108,7 @@ static int getcryptkey(char *keyfile, unsigned char *cryptkey) {
 	/* The maximum size needed for the user information
 		 buffer to be filled in by getpwuid_r(). */
 	/* returns either -1, without changing errno, or an initial suggested size for buf. */
-	size_t sc_bufsize = sysconf(_SC_GETPW_R_SIZE_MAX);
+	ssize_t sc_bufsize = sysconf(_SC_GETPW_R_SIZE_MAX);
 	/* set a large default sc_bufsize in the unlikely case sysconf fails */
 	size_t bufsize = sc_bufsize < 0 ? 16384 : sc_bufsize;
 	/* buffer used in getpwuid_r */
@@ -172,6 +172,9 @@ static int getcryptkey(char *keyfile, unsigned char *cryptkey) {
 static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 		struct vde_open_args *open_args)
 {
+	(void) descr;
+	(void) interface_version;
+	(void) open_args;
 	/* Return value on success; dynamically allocated */
 	struct vde_agno_conn *newconn=NULL;
 	char *nested_url;
@@ -192,7 +195,7 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 	conn = vde_open(nested_url, descr, open_args);
 	if (conn == NULL)
 		return  NULL;
-	if ((newconn=calloc(1,sizeof(struct vde_agno_conn)))==NULL) {
+	if ((newconn=calloc(1, sizeof(struct vde_agno_conn)))==NULL) {
 		errno = ENOMEM;
 		goto error;
 	}
@@ -211,9 +214,11 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 		case STRCASE(i,p,v,6):
 			/* Set ipv6 type */
 			newconn->ether_type = htons(ETHERTYPE_IPV6);	/* 0x86dd */
+			break;
 		case STRCASE(r,a,n,d):
 			/* Generates random number as type */
 			newconn->ether_type = htons(0xffff);
+			break;
 		default: {
 							 char *endptr;
 							 unsigned long type = strtoul(ethtype, &endptr, 0);
@@ -280,7 +285,7 @@ static inline int pad_AesCbcDecrypt(Aes* aes, byte* out,
 	return rv;
 }
 
-static ssize_t vde_agno_recv(VDECONN *conn,void *buf,size_t len,int flags) {
+static ssize_t vde_agno_recv(VDECONN *conn, void *buf, size_t len, int flags) {
 	struct vde_agno_conn *vde_conn = (struct vde_agno_conn *)conn;
 	/*  */
 	size_t enclen = len + 30;
@@ -293,7 +298,7 @@ static ssize_t vde_agno_recv(VDECONN *conn,void *buf,size_t len,int flags) {
 	ssize_t retval = vde_recv(vde_conn->conn, encbuf, enclen, flags);
 	if (retval < 0)
 		return retval;
-	if (len < ETH_HEADER_SIZE || retval < ETH_HEADER_SIZE)
+	if (len < ETH_HEADER_SIZE || retval < (ssize_t) ETH_HEADER_SIZE)
 		goto error;
 	/* The Ethernet header is not encrypted, we can already copy it. */
 	memcpy(ehdr, encbuf, sizeof(*ehdr));
@@ -326,13 +331,13 @@ error:
 	return 1;
 }
 
-static ssize_t vde_agno_send(VDECONN *conn,const void *buf, size_t len,int flags) {
+static ssize_t vde_agno_send(VDECONN *conn, const void *buf, size_t len, int flags) {
 	struct vde_agno_conn *vde_conn = (struct vde_agno_conn *)conn;
 	struct ether_header *ehdr=(struct ether_header *) buf;
 	/* AES works with 16 byte blocks; 16 == header + padding */
 	size_t newlen = len + 16;
 	/*  */
-	size_t enclen = (((newlen - ETH_HEADER_SIZE) + (AES_BLOCK_SIZE - 1)) & ~(AES_BLOCK_SIZE - 1)) + ETH_HEADER_SIZE;
+	ssize_t enclen = (((newlen - ETH_HEADER_SIZE) + (AES_BLOCK_SIZE - 1)) & ~(AES_BLOCK_SIZE - 1)) + ETH_HEADER_SIZE;
 	/* This will contain the encrypted packet */
 	unsigned char encbuf[enclen];
 	struct ether_header *newehdr=(struct ether_header *) encbuf;
@@ -363,7 +368,7 @@ static ssize_t vde_agno_send(VDECONN *conn,const void *buf, size_t len,int flags
 	}
 	/* Complete initialization of agno header */
 #ifndef DEBUG_DISABLE_ENCRYPTION
-	wc_RNG_GenerateBlock(&vde_conn->rng,ahdr.rand, 4);
+	wc_RNG_GenerateBlock(&vde_conn->rng, ahdr.rand, 4);
 #endif
 	/* Encrypt agno header */
 #ifdef DEBUG_DISABLE_ENCRYPTION
