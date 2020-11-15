@@ -43,7 +43,7 @@ The vde_plug_url syntax of this module is the following:
 
 */path/of/keyfile*, if present, must be an absolute path or a path relative to the user's home (e.g. `~/example/path`).
 If omitted the default path of the keyfile is `~/.vde_agno_key`. The keyfile must contain a 128-bit key in hexadecimal format.
-Only hexadecimal caracters are considered in both uppercase and lowercase, all the others are ignored (e.g. white-spaces,
+Only hexadecimal characters are considered in both uppercase and lowercase, all the others are ignored (e.g. white-spaces,
 newline characters, non-hexadecimal letters).
 
 ## OPTIONS
@@ -73,7 +73,7 @@ newline characters, non-hexadecimal letters).
 
   `vdens agno://[ethtype=rand]{vxvde://234.0.0.1}`
 
-  create a nanespace conencted to a vxvde local area cloud. agno uses the key stored
+  create a nanespace connected to a vxvde local area cloud. agno uses the key stored
   in the default keyfile (~/.vde_agno_key) location to encrypt the traffic sent to vxvde.
 
 ## NOTICE
