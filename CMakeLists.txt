@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.1)
 project("vdeplug_agno"
     DESCRIPTION "libvdeplug plugin module for agno"
     HOMEPAGE_URL "https://github.com/rd235/vdeplug_agno"
-    VERSION 0.1.0
+    VERSION 0.1.1
     LANGUAGES C)
 
 include(GNUInstallDirs)
@@ -10,7 +10,7 @@ include(CheckIncludeFile)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE=2 -O2 -pedantic -Wall -Wextra")
 
 set(CMAKE_REQUIRED_QUIET TRUE)
-set(LIBS_REQUIRED vdeplug_mod ssl crypto)
+set(LIBS_REQUIRED vdeplug_mod wolfssl)
 set(HEADERS_REQUIRED strcase.h libvdeplug.h strcase.h wolfssl/options.h wolfssl/wolfcrypt/aes.h wolfssl/wolfcrypt/random.h)
 
 foreach(THISLIB IN LISTS LIBS_REQUIRED)
