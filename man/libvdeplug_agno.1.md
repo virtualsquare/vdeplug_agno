@@ -1,6 +1,3 @@
-libvdeplug_agno(1) -- vdeplug module: add encryption to ethernet link plug
-====
-
 <!--
 .\" Copyright (C) 2020 VirtualSquare. Project Leader: Renzo Davoli
 .\"
@@ -25,11 +22,14 @@ libvdeplug_agno(1) -- vdeplug module: add encryption to ethernet link plug
 .\" MA 02110-1301 USA.
 .\"
 -->
+# NAME
 
-## SYNOPSIS
+`libvdeplug_agno` -- vdeplug module: add encryption to ethernet link plug
+
+# SYNOPSIS
 libvdeplug_agno.so
 
-## DESCRIPTION
+# DESCRIPTION
 
 This is a libvdeplug cryptographic module that implements agnostic encryption over layer 2. Agnostic encryption is
 an encryption method that doesn't need information about the vde network implementation.
@@ -46,20 +46,24 @@ If omitted the default path of the keyfile is `~/.vde_agno_key`. The keyfile mus
 Only hexadecimal characters are considered in both uppercase and lowercase, all the others are ignored (e.g. white-spaces,
 newline characters, non-hexadecimal letters).
 
-## OPTIONS
+# OPTIONS
 
-  * `ethtype=`_TYPE_:
-    define the type of the Ethernet frame of the encrypted packet. TYPE can be the an exadecimal number or:
+  `ethtype=`_TYPE_
+: define the type of the Ethernet frame of the encrypted packet. TYPE can be the an exadecimal number or:
 
-    `copy`: same type of the non-encrypted packet
+  ` `
+: `copy`: same type of the non-encrypted packet
 
-    `ipv4`: ipv4 type (0x0800)
+  ` `
+: `ipv4`: ipv4 type (0x0800)
 
-    `ipv6`: ipv6 type (0x86dd)
+  ` `
+: `ipv6`: ipv6 type (0x86dd)
 
-    `rand`: random number as type. The random number will be generated for every Ethernet packet sent.
+  ` `
+: `rand`: random number as type. The random number will be generated for every Ethernet packet sent.
 
-## EXAMPLES
+# EXAMPLES
 
 `agno://{vde:///tmp/myswitch}`
 
@@ -76,12 +80,12 @@ newline characters, non-hexadecimal letters).
   create a nanespace connected to a vxvde local area cloud. agno uses the key stored
   in the default keyfile (~/.vde_agno_key) location to encrypt the traffic sent to vxvde.
 
-## NOTICE
+# NOTICE
 Virtual Distributed Ethernet is not related in any way with www.vde.com ("Verband der Elektrotechnik, Elektronik
 und Informationstechnik" i.e. the German "Association for Electrical, Electronic & Information Technologies").
 
-## SEE ALSO
+# SEE ALSO
 `vde_plug`(1)
 
-## AUTHOR
+# AUTHOR
 VirtualSquare. Project leader: Renzo Davoli
