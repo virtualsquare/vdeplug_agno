@@ -61,7 +61,7 @@ newline characters, non-hexadecimal letters).
 : `ipv6`: ipv6 type (0x86dd)
 
   ` `
-: `rand`: random number as type. The random number will be generated for every Ethernet packet sent.
+: `rand`: random number as type. The random number will be generated for each Ethernet packet sent.
 
 # EXAMPLES
 
