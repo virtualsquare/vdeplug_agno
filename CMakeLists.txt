@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.25)
 project("vdeplug_agno"
     DESCRIPTION "libvdeplug plugin module for agno"
     HOMEPAGE_URL "https://github.com/rd235/vdeplug_agno"
