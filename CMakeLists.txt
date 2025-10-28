@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 project("vdeplug_agno"
     DESCRIPTION "libvdeplug plugin module for agno"
     HOMEPAGE_URL "https://github.com/rd235/vdeplug_agno"
-    VERSION 0.1.1
+    VERSION 0.1.2
     LANGUAGES C)
 
 include(GNUInstallDirs)
