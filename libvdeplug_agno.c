@@ -1,6 +1,6 @@
 /*
  * VDE - libvdeplug_agno agnostic encrypted vde net (aes encoded)
- * Copyright (C) 2017-2020 Renzo Davoli VirtualSquare
+ * Copyright (C) 2017-2026 Renzo Davoli VirtualSquare
  * contributions by Michele Nalli
  *
  * This library is free software; you can redistribute it and/or modify it
@@ -35,16 +35,16 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
 #ifndef DEBUG_DISABLE_ENCRYPTION
-#include <wolfssl/options.h>
-#include <wolfssl/wolfcrypt/aes.h>
-#include <wolfssl/wolfcrypt/random.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 #endif
 #include <libvdeplug.h>
 #include <libvdeplug_mod.h>
 #include <strcase.h>
 
-   // 128-bit key
-   // e.g. echo secret | md5sum
+// 128-bit key
+// e.g. echo secret | md5sum
+#define AES_BLOCK_SIZE 16
 
 #define DEFAULT_KEYFILE ".vde_agno_key"
 
@@ -81,9 +81,7 @@ struct vde_agno_conn {
 	struct vdeplug_module *module;
 	VDECONN *conn;
 	uint16_t ether_type;
-	Aes ekey;			/* Encryption key */
-	Aes dkey;			/* Decryption key */
-	WC_RNG rng;
+	unsigned char key[AES_BLOCK_SIZE];
 };
 
 /* Declaration of the module sructure */
@@ -96,6 +94,119 @@ struct vdeplug_module vdeplug_ops={
 	.vde_ctlfd=vde_agno_ctlfd,
 	.vde_close=vde_agno_close
 };
+
+/* helper functions */
+
+static int aes128_ecb_encrypt_block(
+		const unsigned char *key,
+		const unsigned char *in,
+		unsigned char *out)
+{
+	int outlen, finallen;
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+
+	if (ctx == NULL)
+		return -1;
+
+	EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, key, NULL);
+	EVP_CIPHER_CTX_set_padding(ctx, 0);
+
+	EVP_EncryptUpdate(ctx, out, &outlen, in, AES_BLOCK_SIZE);
+	EVP_EncryptFinal_ex(ctx, out + outlen, &finallen);
+
+	EVP_CIPHER_CTX_free(ctx);
+	return 0;
+}
+
+static int aes128_ecb_decrypt_block(
+		const unsigned char *key,
+		const unsigned char *in,
+		unsigned char *out)
+{
+	int outlen, finallen;
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+
+	if (ctx == NULL)
+		return -1;
+
+	EVP_DecryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, key, NULL);
+	EVP_CIPHER_CTX_set_padding(ctx, 0);
+
+	EVP_DecryptUpdate(ctx, out, &outlen, in, AES_BLOCK_SIZE);
+	EVP_DecryptFinal_ex(ctx, out + outlen, &finallen);
+
+	EVP_CIPHER_CTX_free(ctx);
+	return 0;
+}
+
+static int aes128_cbc_encrypt(
+		const unsigned char *key,
+		unsigned char *iv,
+		const unsigned char *in,
+		unsigned char *out,
+		size_t len)
+{
+	int outlen, finallen;
+	unsigned int lencomplete = len & ~(AES_BLOCK_SIZE - 1);
+
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+
+	if (ctx == NULL)
+		return -1;
+
+	EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv);
+	EVP_CIPHER_CTX_set_padding(ctx, 0);
+
+	EVP_EncryptUpdate(ctx, out, &outlen, in, lencomplete);
+	if (lencomplete != len) {
+		int i;
+		unsigned char buf[AES_BLOCK_SIZE];
+		for (i = 0; lencomplete + i < len; i++)
+			buf[i] = in[lencomplete + i];
+		for( ; i < AES_BLOCK_SIZE; i++)
+			buf[i] = 0;
+		EVP_EncryptUpdate(ctx, out + lencomplete, &outlen, buf, AES_BLOCK_SIZE);
+	}
+
+	EVP_EncryptFinal_ex(ctx, out + outlen, &finallen);
+
+	EVP_CIPHER_CTX_free(ctx);
+	return 0;
+}
+
+static int aes128_cbc_decrypt(
+		const unsigned char *key,
+		unsigned char *iv,
+		const unsigned char *in,
+		unsigned char *out,
+		size_t len)
+{
+	int outlen, finallen;
+	unsigned int lencomplete = len & ~(AES_BLOCK_SIZE - 1);
+
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+
+	if (ctx == NULL)
+		return -1;
+
+	EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv);
+	EVP_CIPHER_CTX_set_padding(ctx, 0);
+
+	EVP_DecryptUpdate(ctx, out, &outlen, in, lencomplete);
+	if (lencomplete != len) {
+		int i;
+		unsigned char buf[AES_BLOCK_SIZE];
+		EVP_DecryptUpdate(ctx, buf, &outlen, in + lencomplete, AES_BLOCK_SIZE);
+		for (i = 0; lencomplete + i < len; i++)
+			out[lencomplete + i] = buf[i];
+
+	}
+
+	EVP_DecryptFinal_ex(ctx, out + outlen, &finallen);
+
+	EVP_CIPHER_CTX_free(ctx);
+	return 0;
+}
 
 /* keyfile  - path of the keyfile
 	 cryptkey - buffer where the decrypted key will be placed; it should contain 16 bytes.
@@ -139,7 +250,7 @@ static int getcryptkey(char *keyfile, unsigned char *cryptkey) {
 		return -1;
 	}
 	path[PATH_MAX]=0;
-	memset(cryptkey, 0, 16);
+	memset(cryptkey, 0, AES_BLOCK_SIZE);
 	/* Open the keyfile */
 	if ((fd = fopen(path, "r")) == NULL) {
 		errno = ENOENT;
@@ -183,7 +294,7 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 	struct vdeparms parms[] = {
 		{"ethtype", &ethtype},
 		{NULL, NULL}};
-	unsigned char cryptkey[16];
+	unsigned char cryptkey[AES_BLOCK_SIZE];
 	VDECONN *conn;
 
 	nested_url = vde_parsenestparms(vde_url);
@@ -223,7 +334,7 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 							 char *endptr;
 							 unsigned long type = strtoul(ethtype, &endptr, 0);
 							 if (ethtype == endptr && strcmp(ethtype, "") != 0) {
-							 /* ethtype doesn't contain a number */
+								 /* ethtype doesn't contain a number */
 								 errno = EINVAL;
 								 goto error;
 							 }
@@ -240,49 +351,13 @@ static VDECONN *vde_agno_open(char *vde_url, char *descr, int interface_version,
 	}
 	/* Set key as encryption and decryption key */
 #ifndef DEBUG_DISABLE_ENCRYPTION
-	wc_AesSetKey(&newconn->ekey, cryptkey, sizeof(cryptkey), NULL, AES_ENCRYPTION);
-	wc_AesSetKey(&newconn->dkey, cryptkey, sizeof(cryptkey), NULL, AES_DECRYPTION);
-	wc_InitRng(&newconn->rng);
+	memcpy(newconn->key, cryptkey, AES_BLOCK_SIZE);
 #endif
 	return (VDECONN *) newconn;
 
 error:
 	vde_close(conn);
 	return NULL;
-}
-
-/* wc_AesCbcEncrypt + padding */
-static inline int pad_AesCbcEncrypt(Aes* aes, byte* out,
-                                  const byte* in, word32 sz) {
-	int rv;
-	word32 szcomplete = sz & ~(AES_BLOCK_SIZE - 1);
-	rv = wc_AesCbcEncrypt(aes, out, in, szcomplete);
-	if (szcomplete != sz && rv == 0) {
-		word32 i;
-		byte buf[AES_BLOCK_SIZE];
-		for (i = 0; szcomplete + i < sz; i++)
-			buf[i] = in[szcomplete + i];
-		for( ; i < AES_BLOCK_SIZE; i++)
-			buf[i] = 0;
-		rv = wc_AesCbcEncrypt(aes, out + szcomplete, buf, AES_BLOCK_SIZE);
-	}
-	return rv;
-}
-
-/* pad_AesCbcDecrypt + padding */
-static inline int pad_AesCbcDecrypt(Aes* aes, byte* out,
-                                 const byte* in, word32 sz) {
-	int rv;
-	word32 szcomplete = sz & ~(AES_BLOCK_SIZE - 1);
-	rv = wc_AesCbcDecrypt(aes, out, in, szcomplete);
-	if (szcomplete != sz && rv == 0) {
-		word32 i;
-		byte buf[AES_BLOCK_SIZE];
-		rv = pad_AesCbcDecrypt(aes, buf, in + szcomplete, AES_BLOCK_SIZE);
-		for (i = 0; szcomplete + i < sz; i++)
-			out[szcomplete + i] = buf[i];
-	}
-	return rv;
 }
 
 static ssize_t vde_agno_recv(VDECONN *conn, void *buf, size_t len, int flags) {
@@ -306,7 +381,10 @@ static ssize_t vde_agno_recv(VDECONN *conn, void *buf, size_t len, int flags) {
 #ifdef DEBUG_DISABLE_ENCRYPTION
 	memcpy(&ahdr, encbuf + sizeof(*ehdr), sizeof(ahdr));
 #else
-	wc_AesEcbDecrypt(&vde_conn->dkey, (unsigned char *)&ahdr, encbuf + sizeof(*ehdr), AES_BLOCK_SIZE);
+	aes128_ecb_decrypt_block(
+			vde_conn->key,
+			encbuf + sizeof(*ehdr),
+			(unsigned char *)&ahdr);
 #endif
 	/* Tag check */
 	if (ahdr.tag != AGNO_TAG)
@@ -320,9 +398,11 @@ static ssize_t vde_agno_recv(VDECONN *conn, void *buf, size_t len, int flags) {
 #ifdef DEBUG_DISABLE_ENCRYPTION
 	memcpy(((unsigned char *) buf) + ETH_HEADER_SIZE, encbuf + sizeof(*ehdr) + sizeof(ahdr), retval - ETH_HEADER_SIZE); //Decrypt 2
 #else
-	wc_AesSetIV(&vde_conn->dkey, iv_dec);
-	pad_AesCbcDecrypt(&vde_conn->dkey, ((unsigned char *) buf) + ETH_HEADER_SIZE,
+	aes128_cbc_decrypt(
+			vde_conn->key,
+			iv_dec,
 			encbuf + sizeof(*ehdr) + sizeof(ahdr),
+			((unsigned char *) buf) + ETH_HEADER_SIZE,
 			retval - ETH_HEADER_SIZE);
 #endif
 	return retval;
@@ -335,7 +415,7 @@ static ssize_t vde_agno_send(VDECONN *conn, const void *buf, size_t len, int fla
 	struct vde_agno_conn *vde_conn = (struct vde_agno_conn *)conn;
 	struct ether_header *ehdr=(struct ether_header *) buf;
 	/* AES works with 16 byte blocks; 16 == header + padding */
-	size_t newlen = len + 16;
+	size_t newlen = len + AES_BLOCK_SIZE;
 	/*  */
 	ssize_t enclen = (((newlen - ETH_HEADER_SIZE) + (AES_BLOCK_SIZE - 1)) & ~(AES_BLOCK_SIZE - 1)) + ETH_HEADER_SIZE;
 	/* This will contain the encrypted packet */
@@ -368,23 +448,27 @@ static ssize_t vde_agno_send(VDECONN *conn, const void *buf, size_t len, int fla
 	}
 	/* Complete initialization of agno header */
 #ifndef DEBUG_DISABLE_ENCRYPTION
-	wc_RNG_GenerateBlock(&vde_conn->rng, ahdr.rand, 4);
+	RAND_bytes(ahdr.rand, 4);
 #endif
 	/* Encrypt agno header */
 #ifdef DEBUG_DISABLE_ENCRYPTION
 	memcpy(encbuf + sizeof(*ehdr), &ahdr, sizeof(ahdr));
 #else
-	wc_AesEcbEncrypt(&vde_conn->ekey, encbuf + sizeof(*ehdr), (unsigned char *)&ahdr, AES_BLOCK_SIZE);
+	aes128_ecb_encrypt_block(
+			vde_conn->key,
+			(unsigned char *)&ahdr,
+			encbuf + sizeof(*ehdr));
 #endif
 	memcpy(iv_enc, &ahdr, sizeof(iv_enc));
 	/* Encrypt payload */
 #ifdef DEBUG_DISABLE_ENCRYPTION
 	memcpy(encbuf + sizeof(*ehdr) + sizeof(ahdr), ((const unsigned char *) buf) + ETH_HEADER_SIZE, len - ETH_HEADER_SIZE);
 #else
-	wc_AesSetIV(&vde_conn->ekey, iv_enc);
-	pad_AesCbcEncrypt(&vde_conn->ekey,
+	aes128_cbc_encrypt(
+			vde_conn->key,
+			iv_enc,
+			((const unsigned char *) buf) + ETH_HEADER_SIZE,
 			encbuf + sizeof(*ehdr) + sizeof(ahdr),
-			((unsigned char *) buf) + ETH_HEADER_SIZE,
 			len - ETH_HEADER_SIZE);
 #endif
 	retval = vde_send(vde_conn->conn, encbuf, enclen, flags);
@@ -407,9 +491,6 @@ static int vde_agno_ctlfd(VDECONN *conn) {
 static int vde_agno_close(VDECONN *conn) {
 	struct vde_agno_conn *vde_conn = (struct vde_agno_conn *)conn;
 	int rv;
-#ifndef DEBUG_DISABLE_ENCRYPTION
-	wc_FreeRng(&vde_conn->rng);
-#endif
 	rv = vde_close(vde_conn->conn);
 	free(vde_conn);
 	return rv;

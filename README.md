@@ -1,12 +1,12 @@
 # vdeplug\_agno
 
-This is a libvdeplug plugin module to add encryption to a vde connection. It is based on the libwolfssl-dev library.
+This is a libvdeplug plugin module to add encryption to a vde connection. It is based on the openssl/crypto library.
 
 This module of libvdeplug4 can be used in any program supporting VDE like vde\_plug, kvm, qemu, user-mode-linux and virtualbox.
 
 ## install vdeplug\_agno
 
-Requirements: [vdeplug4](https://github.com/rd235/vdeplug4) and libwolfssl-dev.
+Requirements: [vdeplug4](https://github.com/rd235/vdeplug4) and libssl-dev.
 
 vdeplug\_agno uses cmake, so the standard procedure to build and install this vdeplug plugin module is the following:
 ```
@@ -40,4 +40,3 @@ See the man page (libvdeplug_agno) for further information.
 
 GNU Lesser General Public License v 2.1 or later.
 
-It uses libwolfssl: see the [wolfssl FLOSS exception](https://www.wolfssl.com/docs/floss-exception/).
